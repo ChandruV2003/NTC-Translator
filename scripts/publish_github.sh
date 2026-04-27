@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPO_NAME="${1:-Transcriptom}"
+REPO_NAME="${1:-Transcriptor}"
 VISIBILITY="${2:-private}"
 
 fail() {
@@ -25,10 +25,10 @@ if [[ ! -d .git ]]; then
 fi
 
 git branch -M main
-git add .gitignore README.md install.sh requirements.txt transcriptom transcriptom_app scripts
+git add .gitignore README.md install.sh requirements.txt transcriptor transcriptom transcriptor_app scripts
 
 if ! git diff --cached --quiet; then
-  git commit -m "Initial Transcriptom CLI"
+  git commit -m "Initial Transcriptor CLI"
 fi
 
 if git remote get-url origin >/dev/null 2>&1; then

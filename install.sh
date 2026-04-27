@@ -5,11 +5,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$ROOT_DIR/.venv"
 
 info() {
-  printf '\033[1;34m[Transcriptom]\033[0m %s\n' "$1"
+  printf '\033[1;34m[Transcriptor]\033[0m %s\n' "$1"
 }
 
 fail() {
-  printf '\033[1;31m[Transcriptom]\033[0m %s\n' "$1" >&2
+  printf '\033[1;31m[Transcriptor]\033[0m %s\n' "$1" >&2
   exit 1
 }
 
@@ -60,12 +60,13 @@ fi
 info "Upgrading installer tools..."
 "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
 
-info "Installing Transcriptom dependencies..."
+info "Installing Transcriptor dependencies..."
 "$VENV_DIR/bin/python" -m pip install -r "$ROOT_DIR/requirements.txt"
 
+chmod +x "$ROOT_DIR/transcriptor"
 chmod +x "$ROOT_DIR/transcriptom"
 chmod +x "$ROOT_DIR/scripts/check.sh" 2>/dev/null || true
 chmod +x "$ROOT_DIR/scripts/publish_github.sh" 2>/dev/null || true
 
 info "Done."
-printf '\nTry it with:\n  ./transcriptom "/path/to/audio.m4a"\n\n'
+printf '\nTry it with:\n  ./transcriptor "/path/to/audio.m4a"\n\n'

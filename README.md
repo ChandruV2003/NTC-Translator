@@ -1,16 +1,16 @@
-# Transcriptom
+# Transcriptor
 
 Simple local transcription for `.m4a`, `.mp3`, `.wav`, `.mp4`, and other audio/video files on macOS.
 
-Transcriptom runs Whisper locally through `faster-whisper`, so there is no OpenAI API key and no per-file upload cost. The first run downloads the speech model, then later runs reuse it.
+Transcriptor runs Whisper locally through `faster-whisper`, so there is no OpenAI API key and no per-file upload cost. The first run downloads the speech model, then later runs reuse it.
 
 ## Quick Start
 
 ```bash
-git clone <your-github-repo-url> Transcriptom
-cd Transcriptom
+git clone <your-github-repo-url> Transcriptor
+cd Transcriptor
 ./install.sh
-./transcriptom "/path/to/audio.m4a"
+./transcriptor "/path/to/audio.m4a"
 ```
 
 Outputs go to `transcripts/` by default.
@@ -18,10 +18,10 @@ Outputs go to `transcripts/` by default.
 Once this repo is on GitHub, the install flow for someone else is just:
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/Transcriptom.git
-cd Transcriptom
+git clone https://github.com/YOUR-USERNAME/Transcriptor.git
+cd Transcriptor
 ./install.sh
-./transcriptom "~/Downloads/audio.m4a"
+./transcriptor "~/Downloads/audio.m4a"
 ```
 
 ## Examples
@@ -29,31 +29,31 @@ cd Transcriptom
 Transcribe one file:
 
 ```bash
-./transcriptom "~/Downloads/interview.m4a"
+./transcriptor "~/Downloads/interview.m4a"
 ```
 
 Transcribe a whole folder:
 
 ```bash
-./transcriptom "~/Downloads/audio-files"
+./transcriptor "~/Downloads/audio-files"
 ```
 
 Use a faster model:
 
 ```bash
-./transcriptom "~/Downloads/audio-files" --model small
+./transcriptor "~/Downloads/audio-files" --model small
 ```
 
-Use a stronger model for rough audio:
+Use the default highest-quality model for rough audio:
 
 ```bash
-./transcriptom "~/Downloads/audio-files" --model medium
+./transcriptor "~/Downloads/audio-files" --model large-v3
 ```
 
 Create subtitles too:
 
 ```bash
-./transcriptom "~/Downloads/interview.m4a" --formats txt srt vtt
+./transcriptor "~/Downloads/interview.m4a" --formats txt srt vtt
 ```
 
 ## Recommended Settings
@@ -62,9 +62,9 @@ For a 16 GB Apple Silicon MacBook:
 
 - `small`: faster, usually good enough for clear audio
 - `medium`: better for rough audio, slower, still reasonable on 16 GB RAM
-- `large-v3`: best quality, much slower and heavier
+- `large-v3`: best quality, much slower and heavier, but usable on 16 GB with the default `int8` compute type
 
-Transcriptom defaults to `medium` because rough hour-long recordings usually need the extra accuracy. Use `--model small` if speed matters more.
+Transcriptor defaults to `large-v3` for best quality. Use `--model medium` or `--model small` if speed matters more.
 
 ## Requirements
 
@@ -75,12 +75,12 @@ Homebrew is only needed if the Mac does not already have a compatible Python.
 ## Commands
 
 ```bash
-./transcriptom --help
+./transcriptor --help
 ```
 
 Common options:
 
-- `--model small|medium|large-v3`
+- `--model small|medium|large-v3|large-v3-turbo`
 - `--language en`
 - `--output-dir transcripts`
 - `--formats txt json srt vtt`
@@ -96,7 +96,7 @@ The transcription stays local on the computer. No audio is sent to OpenAI by thi
 If you have the GitHub CLI installed and logged in:
 
 ```bash
-./scripts/publish_github.sh YOUR-USERNAME/Transcriptom private
+./scripts/publish_github.sh YOUR-USERNAME/Transcriptor private
 ```
 
 Use `public` instead of `private` if you want the repo visible to anyone.

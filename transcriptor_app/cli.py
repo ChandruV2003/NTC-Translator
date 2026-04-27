@@ -48,7 +48,7 @@ class Transcript:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="transcriptom",
+        prog="transcriptor",
         description="Transcribe audio/video files locally with faster-whisper.",
     )
     parser.add_argument(
@@ -58,8 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default="medium",
-        help="Whisper model to use. Try small for speed or medium for rough audio. Default: medium.",
+        default="large-v3",
+        help="Whisper model to use. Try small for speed or large-v3 for best quality. Default: large-v3.",
     )
     parser.add_argument(
         "--language",
