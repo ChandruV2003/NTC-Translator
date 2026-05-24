@@ -150,6 +150,24 @@ class NTCCaptionPanelTests(unittest.TestCase):
         self.assertEqual(payload["room_slug"], "room-a")
         self.assertEqual([segment["text"] for segment in payload["segments"]], ["Second public line."])
 
+    def test_public_transcribe_api_limits_stale_cursors_to_recent_window(self):
+        for index in range(85):
+            self.app.ntc_store.record_transcript_segment(
+                "room-a",
+                host_slug="hp-envy-16-ad0xx",
+                provider="local_http",
+                model="whisper",
+                text=f"Public line {index}.",
+            )
+
+        response = self.client.get("/api/public/transcribe/room-a/segments?after_id=1")
+
+        self.assertEqual(response.status_code, 200)
+        texts = [segment["text"] for segment in response.get_json()["segments"]]
+        self.assertEqual(len(texts), 80)
+        self.assertEqual(texts[0], "Public line 5.")
+        self.assertEqual(texts[-1], "Public line 84.")
+
     def test_public_transcribe_rejects_unknown_room(self):
         response = self.client.get("/transcribe/diagnostics")
 

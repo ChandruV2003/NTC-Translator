@@ -312,7 +312,12 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
             after_id = int(request.args.get("after_id", "0") or "0")
         except ValueError:
             after_id = 0
-        segments = ntc_store.list_transcript_segments_after(room["slug"], after_id=after_id, limit=80)
+        recent_segments = ntc_store.list_transcript_segments(room["slug"], limit=80)
+        recent_floor_id = min((int(segment["id"]) for segment in recent_segments), default=0)
+        if after_id <= 0 or (recent_floor_id and after_id < recent_floor_id):
+            segments = list(reversed(recent_segments))
+        else:
+            segments = ntc_store.list_transcript_segments_after(room["slug"], after_id=after_id, limit=80)
         return jsonify({"room_slug": room["slug"], "segments": segments})
 
     return app
