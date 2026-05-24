@@ -16,4 +16,4 @@ COPY . /app
 
 EXPOSE 1974
 
-CMD ["gunicorn", "-w", "1", "--threads", "4", "-b", "0.0.0.0:1974", "ntc_transcriptor_panel:app"]
+CMD ["gunicorn", "-w", "1", "--threads", "4", "-b", "0.0.0.0:1974", "ntc_translator_panel:app"]

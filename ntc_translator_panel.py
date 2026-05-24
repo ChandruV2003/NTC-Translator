@@ -1,4 +1,4 @@
-"""NTC transcriptor panel entrypoint."""
+"""NTC translator panel entrypoint."""
 
 from __future__ import annotations
 

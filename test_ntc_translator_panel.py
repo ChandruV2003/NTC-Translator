@@ -2,6 +2,7 @@ import base64
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from ntc_translator_app import create_app
 
@@ -19,9 +20,10 @@ class NTCCaptionPanelTests(unittest.TestCase):
             {
                 "TESTING": True,
                 "NTC_DB_PATH": str(self.db_path),
-                "NTC_CAPTIONS_PANEL_PASSWORD": "panel-password",
-                "NTC_CAPTIONS_AUTH_ENABLED": "1",
+                "NTC_TRANSLATOR_PANEL_PASSWORD": "panel-password",
+                "NTC_TRANSLATOR_AUTH_ENABLED": "1",
                 "NTC_ADMIN_PASSWORD": "",
+                "NTC_TRANSCRIPTION_BASE_URL": "",
                 "NTC_TRANSLATION_AUDIO_DIR": str(Path(self.tempdir.name) / "translation-audio"),
             }
         )
@@ -107,8 +109,39 @@ class NTCCaptionPanelTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual([segment["text"] for segment in payload["segments"]], ["Second line."])
 
+    def test_caption_panel_api_can_read_segments_from_transcription_service(self):
+        self.app.config["NTC_TRANSCRIPTION_BASE_URL"] = "http://ntc-transcription:1975/"
+        mocked_response = Mock()
+        mocked_response.json.return_value = {
+            "room_slug": "room-a",
+            "segments": [
+                {
+                    "id": 99,
+                    "room_slug": "room-a",
+                    "received_at": "2026-05-24T20:00:00+00:00",
+                    "text": "Segment from transcription container.",
+                    "is_final": True,
+                }
+            ],
+        }
+
+        with patch("ntc_translator_app.requests.get", return_value=mocked_response) as mocked_get:
+            response = self.client.get(
+                "/api/rooms/room-a/segments?after_id=12",
+                headers=_basic_auth("panel-password"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mocked_response.raise_for_status.assert_called_once_with()
+        mocked_get.assert_called_once()
+        args, kwargs = mocked_get.call_args
+        self.assertEqual(args[0], "http://ntc-transcription:1975/api/internal/transcription/room-a/segments")
+        self.assertEqual(kwargs["params"], {"after_id": 12})
+        payload = response.get_json()
+        self.assertEqual([segment["text"] for segment in payload["segments"]], ["Segment from transcription container."])
+
     def test_caption_panel_can_disable_auth_for_tailscale_only_port(self):
-        self.app.config["NTC_CAPTIONS_AUTH_ENABLED"] = "0"
+        self.app.config["NTC_TRANSLATOR_AUTH_ENABLED"] = "0"
 
         response = self.client.get("/rooms/room-a")
 

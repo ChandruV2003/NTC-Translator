@@ -7,7 +7,9 @@ import hmac
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
+import requests
 from flask import Flask, Response, jsonify, redirect, render_template_string, request, send_file, url_for
 
 from ntc_env import install_legacy_env_aliases
@@ -43,11 +45,21 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
     app = Flask(__name__)
     app.config.update(
         NTC_DB_PATH=os.getenv("NTC_DB_PATH"),
-        NTC_CAPTIONS_PANEL_PASSWORD=os.getenv("NTC_CAPTIONS_PANEL_PASSWORD", ""),
+        NTC_TRANSLATOR_PANEL_PASSWORD=os.getenv(
+            "NTC_TRANSLATOR_PANEL_PASSWORD",
+            os.getenv("NTC_CAPTIONS_PANEL_PASSWORD", ""),
+        ),
         NTC_ADMIN_PASSWORD=os.getenv("NTC_ADMIN_PASSWORD", ""),
-        NTC_CAPTIONS_AUTH_ENABLED=os.getenv("NTC_CAPTIONS_AUTH_ENABLED", "1"),
-        NTC_CAPTIONS_TITLE=os.getenv("NTC_CAPTIONS_TITLE", "The Translator"),
-        NTC_CAPTIONS_POLL_MS=int(os.getenv("NTC_CAPTIONS_POLL_MS", "1000")),
+        NTC_TRANSLATOR_AUTH_ENABLED=os.getenv(
+            "NTC_TRANSLATOR_AUTH_ENABLED",
+            os.getenv("NTC_CAPTIONS_AUTH_ENABLED", "1"),
+        ),
+        NTC_TRANSLATOR_TITLE=os.getenv(
+            "NTC_TRANSLATOR_TITLE",
+            os.getenv("NTC_CAPTIONS_TITLE", "The Translator"),
+        ),
+        NTC_TRANSLATOR_POLL_MS=int(os.getenv("NTC_TRANSLATOR_POLL_MS", os.getenv("NTC_CAPTIONS_POLL_MS", "1000"))),
+        NTC_TRANSCRIPTION_BASE_URL=os.getenv("NTC_TRANSCRIPTION_BASE_URL", ""),
         NTC_TRANSLATION_AUDIO_DIR=os.getenv("NTC_TRANSLATION_AUDIO_DIR", "/app/data/translation-audio"),
     )
     if test_config:
@@ -59,13 +71,13 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
 
     def _panel_password() -> str:
         return (
-            app.config.get("NTC_CAPTIONS_PANEL_PASSWORD")
+            app.config.get("NTC_TRANSLATOR_PANEL_PASSWORD")
             or app.config.get("NTC_ADMIN_PASSWORD")
             or ""
         ).strip()
 
     def _auth_enabled() -> bool:
-        value = str(app.config.get("NTC_CAPTIONS_AUTH_ENABLED", "1")).strip().lower()
+        value = str(app.config.get("NTC_TRANSLATOR_AUTH_ENABLED", "1")).strip().lower()
         return value not in {"0", "false", "no", "off"}
 
     def _authorized() -> bool:
@@ -154,14 +166,14 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
         if not selected:
             return render_template_string(
                 CAPTION_PANEL_TEMPLATE,
-                title=app.config["NTC_CAPTIONS_TITLE"],
+                title=app.config["NTC_TRANSLATOR_TITLE"],
                 rooms=[],
                 room=None,
                 latest_segment=None,
                 segments=[],
                 translation_jobs=[],
                 language_options=TRANSLATION_LANGUAGE_OPTIONS,
-                poll_ms=app.config["NTC_CAPTIONS_POLL_MS"],
+                poll_ms=app.config["NTC_TRANSLATOR_POLL_MS"],
             )
         return redirect(url_for("room_captions", room_slug=selected["slug"]))
 
@@ -173,14 +185,14 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
         recent_segments = list(reversed(ntc_store.list_transcript_segments(room_slug, limit=40)))
         return render_template_string(
             CAPTION_PANEL_TEMPLATE,
-            title=app.config["NTC_CAPTIONS_TITLE"],
+            title=app.config["NTC_TRANSLATOR_TITLE"],
             rooms=_rooms(),
             room=room,
             latest_segment=recent_segments[-1] if recent_segments else None,
             segments=recent_segments,
             translation_jobs=ntc_store.list_recent_translation_audio_jobs(room_slug, limit=8),
             language_options=TRANSLATION_LANGUAGE_OPTIONS,
-            poll_ms=app.config["NTC_CAPTIONS_POLL_MS"],
+            poll_ms=app.config["NTC_TRANSLATOR_POLL_MS"],
         )
 
     @app.post("/rooms/<room_slug>/captions")
@@ -278,8 +290,30 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
             after_id = int(request.args.get("after_id", "0") or "0")
         except ValueError:
             after_id = 0
+        transcription_payload = _transcription_segments_payload(room["slug"], after_id=after_id)
+        if transcription_payload is not None:
+            return jsonify(transcription_payload)
         segments = ntc_store.list_transcript_segments_after(room_slug, after_id=after_id, limit=80)
         return jsonify({"room_slug": room_slug, "segments": segments})
+
+    def _transcription_segments_payload(room_slug: str, *, after_id: int):
+        base_url = (app.config.get("NTC_TRANSCRIPTION_BASE_URL") or "").strip().rstrip("/")
+        if not base_url:
+            return None
+        try:
+            response = requests.get(
+                f"{base_url}/api/internal/transcription/{quote(room_slug, safe='')}/segments",
+                params={"after_id": max(0, int(after_id or 0))},
+                timeout=3,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("room_slug") != room_slug or not isinstance(payload.get("segments"), list):
+                raise RuntimeError("transcription service returned an invalid segment payload")
+            return payload
+        except Exception as exc:  # pragma: no cover - runtime fallback guard
+            app.logger.warning("transcription service segment fetch failed room_slug=%s error=%s", room_slug, exc)
+            return None
 
     return app
 
@@ -836,6 +870,6 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    host = os.getenv("NTC_CAPTIONS_HOST", "0.0.0.0")
-    port = int(os.getenv("NTC_CAPTIONS_PORT", "1974"))
+    host = os.getenv("NTC_TRANSLATOR_HOST", os.getenv("NTC_CAPTIONS_HOST", "0.0.0.0"))
+    port = int(os.getenv("NTC_TRANSLATOR_PORT", os.getenv("NTC_CAPTIONS_PORT", "1974")))
     app.run(host=host, port=port)
