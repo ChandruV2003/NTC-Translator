@@ -11,6 +11,15 @@ This service is intentionally separate from `NTC-WebCall`. WebCall can publish a
 - Runtime data is expected under `data/` and is not committed
 - Environment variables use the `NTC_*` prefix
 
+## Endpoints
+
+- Internal control panel: `/rooms/<room-slug>`
+- Public Room A transcription display: `/transcribe`
+- Public room-specific transcription display: `/transcribe/<room-slug>`
+- Public read-only transcript polling API: `/api/public/transcribe/<room-slug>/segments`
+
+The public transcription display is intentionally read-only. It does not expose caption ingest controls, translation settings, translated audio output, or internal room controls.
+
 ## Local Validation
 
 ```bash

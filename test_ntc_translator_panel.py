@@ -107,6 +107,54 @@ class NTCCaptionPanelTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual([segment["text"] for segment in payload["segments"]], ["Second line."])
 
+    def test_public_transcribe_page_is_read_only_and_does_not_require_auth(self):
+        self.app.ntc_store.record_transcript_segment(
+            "room-a",
+            host_slug="hp-envy-16-ad0xx",
+            provider="local_http",
+            model="whisper",
+            text="Public transcription line.",
+        )
+
+        response = self.client.get("/transcribe")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Public transcription line.", response.data)
+        self.assertIn(b"background: #000", response.data)
+        self.assertIn(b"/api/public/transcribe/", response.data)
+        self.assertNotIn(b"/brand/ntc-embossed-background.jpg", response.data)
+        self.assertNotIn(b"Live Caption Ingest", response.data)
+        self.assertNotIn(b"Translation Settings", response.data)
+        self.assertNotIn(b"Translated Audio Output", response.data)
+
+    def test_public_transcribe_api_returns_segments_after_id(self):
+        first_id = self.app.ntc_store.record_transcript_segment(
+            "room-a",
+            host_slug="hp-envy-16-ad0xx",
+            provider="local_http",
+            model="whisper",
+            text="First public line.",
+        )
+        self.app.ntc_store.record_transcript_segment(
+            "room-a",
+            host_slug="hp-envy-16-ad0xx",
+            provider="local_http",
+            model="whisper",
+            text="Second public line.",
+        )
+
+        response = self.client.get(f"/api/public/transcribe/room-a/segments?after_id={first_id}")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["room_slug"], "room-a")
+        self.assertEqual([segment["text"] for segment in payload["segments"]], ["Second public line."])
+
+    def test_public_transcribe_rejects_unknown_room(self):
+        response = self.client.get("/transcribe/diagnostics")
+
+        self.assertEqual(response.status_code, 404)
+
     def test_caption_panel_can_disable_auth_for_tailscale_only_port(self):
         self.app.config["NTC_CAPTIONS_AUTH_ENABLED"] = "0"
 
