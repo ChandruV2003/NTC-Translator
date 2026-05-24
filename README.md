@@ -14,11 +14,9 @@ This service is intentionally separate from `NTC-WebCall`. WebCall can publish a
 ## Endpoints
 
 - Internal control panel: `/rooms/<room-slug>`
-- Public Room A transcription display: `/transcribe`
-- Public room-specific transcription display: `/transcribe/<room-slug>`
-- Public read-only transcript polling API: `/api/public/transcribe/<room-slug>/segments`
+- Internal transcript polling API: `/api/rooms/<room-slug>/segments`
 
-The public transcription display is intentionally read-only. It does not expose caption ingest controls, translation settings, translated audio output, or internal room controls.
+The public live caption display is owned by `NTC-LiveCaptions`.
 
 ## Local Validation
 

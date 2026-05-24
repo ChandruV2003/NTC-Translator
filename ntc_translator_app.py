@@ -133,8 +133,7 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
 
     @app.before_request
     def require_panel_auth():
-        endpoint = request.endpoint or ""
-        if endpoint == "healthz" or endpoint.startswith("public_"):
+        if request.endpoint == "healthz":
             return None
         return _require_auth()
 
@@ -183,27 +182,6 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
             language_options=TRANSLATION_LANGUAGE_OPTIONS,
             poll_ms=app.config["NTC_CAPTIONS_POLL_MS"],
         )
-
-    def _render_public_transcription(room_slug: str):
-        room = _room_or_404(room_slug)
-        if not room:
-            return jsonify({"error": "unknown room"}), 404
-        recent_segments = list(reversed(ntc_store.list_transcript_segments(room["slug"], limit=30)))
-        return render_template_string(
-            PUBLIC_TRANSCRIBE_TEMPLATE,
-            title=f"{room['label']} Transcription",
-            room=room,
-            segments=recent_segments,
-            poll_ms=app.config["NTC_CAPTIONS_POLL_MS"],
-        )
-
-    @app.get("/transcribe")
-    def public_transcribe():
-        return _render_public_transcription("room-a")
-
-    @app.get("/transcribe/<room_slug>")
-    def public_transcribe_room(room_slug: str):
-        return _render_public_transcription(room_slug)
 
     @app.post("/rooms/<room_slug>/captions")
     def set_room_captions(room_slug: str):
@@ -303,135 +281,7 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
         segments = ntc_store.list_transcript_segments_after(room_slug, after_id=after_id, limit=80)
         return jsonify({"room_slug": room_slug, "segments": segments})
 
-    @app.get("/api/public/transcribe/<room_slug>/segments")
-    def public_transcribe_segments(room_slug: str):
-        room = _room_or_404(room_slug)
-        if not room:
-            return jsonify({"error": "unknown room"}), 404
-        try:
-            after_id = int(request.args.get("after_id", "0") or "0")
-        except ValueError:
-            after_id = 0
-        recent_segments = ntc_store.list_transcript_segments(room["slug"], limit=80)
-        recent_floor_id = min((int(segment["id"]) for segment in recent_segments), default=0)
-        if after_id <= 0 or (recent_floor_id and after_id < recent_floor_id):
-            segments = list(reversed(recent_segments))
-        else:
-            segments = ntc_store.list_transcript_segments_after(room["slug"], after_id=after_id, limit=80)
-        return jsonify({"room_slug": room["slug"], "segments": segments})
-
     return app
-
-
-PUBLIC_TRANSCRIBE_TEMPLATE = """
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ title }}</title>
-    <style data-ntc-branding="ntc-bg">
-      * { box-sizing: border-box; }
-      html, body { min-height: 100%; }
-      body {
-        margin: 0;
-        background: #000;
-        color: #fff;
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      main {
-        min-height: 100vh;
-        display: flex;
-        align-items: flex-end;
-        padding: clamp(24px, 5vw, 76px);
-      }
-      .transcript {
-        width: min(100%, 1260px);
-        display: grid;
-        gap: clamp(14px, 2vw, 28px);
-      }
-      .line,
-      .empty {
-        margin: 0;
-        color: #fff;
-        font-size: clamp(32px, 5.6vw, 78px);
-        font-weight: 850;
-        line-height: 1.12;
-        letter-spacing: 0;
-        overflow-wrap: anywhere;
-      }
-      .line:not(:last-child) { opacity: 0.62; }
-      .empty { opacity: 0.72; }
-      @media (max-width: 720px) {
-        main { padding: 22px; }
-        .line,
-        .empty { font-size: clamp(28px, 11vw, 58px); }
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <section
-        id="transcript"
-        class="transcript"
-        aria-live="polite"
-        data-room-slug="{{ room.slug }}"
-        data-poll-ms="{{ poll_ms }}"
-      >
-        {% if segments %}
-          {% for segment in segments %}
-            <p class="line" data-segment-id="{{ segment.id }}">{{ segment.text }}</p>
-          {% endfor %}
-        {% else %}
-          <p class="empty" id="empty-state">Waiting for transcription.</p>
-        {% endif %}
-      </section>
-    </main>
-    <script>
-      (() => {
-        const transcript = document.getElementById("transcript");
-        if (!transcript) return;
-        const roomSlug = transcript.dataset.roomSlug;
-        const pollMs = Number(transcript.dataset.pollMs || "1000");
-        const seen = new Set([...transcript.querySelectorAll("[data-segment-id]")].map((node) => node.dataset.segmentId));
-        let lastId = Math.max(0, ...[...transcript.querySelectorAll("[data-segment-id]")].map((node) => Number(node.dataset.segmentId || "0")));
-
-        function appendSegment(segment) {
-          const id = String(segment.id || "");
-          const text = String(segment.text || "").trim();
-          if (!id || !text || seen.has(id)) return;
-          seen.add(id);
-          lastId = Math.max(lastId, Number(id));
-          document.getElementById("empty-state")?.remove();
-          const line = document.createElement("p");
-          line.className = "line";
-          line.dataset.segmentId = id;
-          line.textContent = text;
-          transcript.appendChild(line);
-          while (transcript.querySelectorAll(".line").length > 18) {
-            transcript.querySelector(".line")?.remove();
-          }
-          window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-        }
-
-        async function poll() {
-          try {
-            const response = await fetch(`/api/public/transcribe/${encodeURIComponent(roomSlug)}/segments?after_id=${lastId}`, { cache: "no-store" });
-            if (response.ok) {
-              const payload = await response.json();
-              for (const segment of payload.segments || []) appendSegment(segment);
-            }
-          } finally {
-            window.setTimeout(poll, Math.max(500, pollMs));
-          }
-        }
-
-        window.setTimeout(poll, Math.max(500, pollMs));
-      })();
-    </script>
-  </body>
-</html>
-"""
 
 
 CAPTION_PANEL_TEMPLATE = """
