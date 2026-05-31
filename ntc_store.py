@@ -2145,6 +2145,19 @@ class NTCStore:
             """,
             (row["room_slug"], started_at, ended_at),
         ).fetchone()[0]
+        transcript_stats = connection.execute(
+            """
+            SELECT COUNT(*) AS segment_count,
+                   MIN(received_at) AS first_received_at,
+                   MAX(received_at) AS last_received_at,
+                   COALESCE(SUM(LENGTH(text)), 0) AS character_count
+            FROM transcript_segments
+            WHERE room_slug = ?
+              AND received_at >= ?
+              AND received_at <= ?
+            """,
+            (row["room_slug"], started_at, ended_at),
+        ).fetchone()
         return {
             "id": row["id"],
             "room_slug": row["room_slug"],
@@ -2158,6 +2171,10 @@ class NTCStore:
             "listener_count": int(listener_count or 0),
             "listener_join_count": len(listener_rows),
             "incident_count": int(incident_count or 0),
+            "transcript_segment_count": int((transcript_stats or {})["segment_count"] or 0),
+            "transcript_character_count": int((transcript_stats or {})["character_count"] or 0),
+            "transcript_first_received_at": (transcript_stats or {})["first_received_at"],
+            "transcript_last_received_at": (transcript_stats or {})["last_received_at"],
         }
 
     def get_meeting_report(self, meeting_id: int):

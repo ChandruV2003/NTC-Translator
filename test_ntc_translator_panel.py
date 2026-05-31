@@ -48,7 +48,7 @@ class NTCCaptionPanelTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"The Translator", response.data)
         self.assertIn(b"NTC Newark", response.data)
-        self.assertIn(b"Latest Caption", response.data)
+        self.assertIn(b"Latest Transcription", response.data)
         self.assertIn(b"Transcript", response.data)
         self.assertIn(b"Testing internal captions.", response.data)
         self.assertIn(b"Room A", response.data)
@@ -59,30 +59,59 @@ class NTCCaptionPanelTests(unittest.TestCase):
         response = self.client.get("/rooms/room-a", headers=_basic_auth("panel-password"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Live Caption Ingest", response.data)
-        self.assertIn(b"Captions are OFF", response.data)
+        self.assertIn(b"Live Transcription Ingest", response.data)
+        self.assertIn(b"Transcription is OFF", response.data)
 
         enabled = self.client.post(
-            "/rooms/room-a/captions",
-            data={"caption_enabled": "1"},
+            "/rooms/room-a/transcription",
+            data={"transcription_enabled": "1"},
             headers=_basic_auth("panel-password"),
             follow_redirects=True,
         )
 
         self.assertEqual(enabled.status_code, 200)
-        self.assertIn(b"Captions are ON", enabled.data)
+        self.assertIn(b"Transcription is ON", enabled.data)
         self.assertTrue(self.app.ntc_store.get_room("room-a")["transcription_enabled"])
 
         disabled = self.client.post(
-            "/rooms/room-a/captions",
-            data={"caption_enabled": "0"},
+            "/rooms/room-a/transcription",
+            data={"transcription_enabled": "0"},
             headers=_basic_auth("panel-password"),
             follow_redirects=True,
         )
 
         self.assertEqual(disabled.status_code, 200)
-        self.assertIn(b"Captions are OFF", disabled.data)
+        self.assertIn(b"Transcription is OFF", disabled.data)
         self.assertFalse(self.app.ntc_store.get_room("room-a")["transcription_enabled"])
+
+    def test_caption_panel_shows_recent_service_transcription_stats(self):
+        self.app.ntc_store.sync_meeting_state(
+            "room-a",
+            active=True,
+            host_slug="hp-envy-16-ad0xx",
+            trigger_mode="manual",
+            actor="test",
+        )
+        self.app.ntc_store.record_transcript_segment(
+            "room-a",
+            host_slug="hp-envy-16-ad0xx",
+            provider="local_http",
+            model="openai/whisper-large-v3",
+            text="Tomorrow morning service transcription.",
+        )
+        self.app.ntc_store.sync_meeting_state(
+            "room-a",
+            active=False,
+            host_slug="hp-envy-16-ad0xx",
+            trigger_mode="manual",
+            actor="test",
+        )
+
+        response = self.client.get("/rooms/room-a", headers=_basic_auth("panel-password"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Recent Service Stats", response.data)
+        self.assertIn(b"1 transcription segments", response.data)
 
     def test_caption_panel_api_returns_segments_after_id(self):
         first_id = self.app.ntc_store.record_transcript_segment(

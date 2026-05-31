@@ -120,6 +120,7 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
                 {
                     **room,
                     "caption_enabled": bool(room.get("transcription_enabled")),
+                    "transcription_enabled": bool(room.get("transcription_enabled")),
                     "active": room["slug"] == active_room_slug,
                     "host_slug": host_slug,
                     "host_label": host.get("label", ""),
@@ -172,6 +173,7 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
                 latest_segment=None,
                 segments=[],
                 translation_jobs=[],
+                recent_meetings=[],
                 language_options=TRANSLATION_LANGUAGE_OPTIONS,
                 poll_ms=app.config["NTC_TRANSLATOR_POLL_MS"],
             )
@@ -191,16 +193,20 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
             latest_segment=recent_segments[-1] if recent_segments else None,
             segments=recent_segments,
             translation_jobs=ntc_store.list_recent_translation_audio_jobs(room_slug, limit=8),
+            recent_meetings=ntc_store.list_meeting_sessions(limit=8),
             language_options=TRANSLATION_LANGUAGE_OPTIONS,
             poll_ms=app.config["NTC_TRANSLATOR_POLL_MS"],
         )
 
+    @app.post("/rooms/<room_slug>/transcription")
     @app.post("/rooms/<room_slug>/captions")
-    def set_room_captions(room_slug: str):
+    def set_room_transcription(room_slug: str):
         room = _room_or_404(room_slug)
         if not room:
             return jsonify({"error": "unknown room"}), 404
-        value = str(request.form.get("caption_enabled", "")).strip().lower()
+        value = str(
+            request.form.get("transcription_enabled", request.form.get("caption_enabled", ""))
+        ).strip().lower()
         updated = ntc_store.set_room_transcription_enabled(
             room_slug,
             value in {"1", "true", "yes", "on"},
@@ -667,7 +673,7 @@ CAPTION_PANEL_TEMPLATE = """
         <div>
           <div class="eyebrow">NTC Newark</div>
           <h1>{{ title }}</h1>
-          <p class="hero-note">Internal live captions, translated audio tests, and room output controls. This panel is isolated from the public WebCall and dial-in audio path.</p>
+          <p class="hero-note">Internal transcription, translated audio tests, and room output controls. This panel is isolated from the public WebCall and dial-in audio path.</p>
         </div>
         {% if room %}
           <span class="pill {% if room.active %}good{% endif %}">{{ "Meeting Live" if room.active else "Standby" }}</span>
@@ -693,7 +699,7 @@ CAPTION_PANEL_TEMPLATE = """
               <p>{{ room.current_device or "Waiting for source audio metadata." }}</p>
             </div>
             <div class="status-row">
-              <span class="pill {% if room.caption_enabled %}good{% else %}warn{% endif %}">Captions {{ "On" if room.caption_enabled else "Off" }}</span>
+              <span class="pill {% if room.transcription_enabled %}good{% else %}warn{% endif %}">Transcription {{ "On" if room.transcription_enabled else "Off" }}</span>
               <span class="pill {% if room.host_online %}good{% else %}bad{% endif %}">Agent {{ "Seen" if room.host_online else "Not Seen" }}</span>
               <span class="pill" id="poll-status">Polling</span>
             </div>
@@ -702,14 +708,14 @@ CAPTION_PANEL_TEMPLATE = """
             <div class="controls-stack">
               <section class="caption-control">
                 <div>
-                  <div class="caption-meta">Live Caption Ingest</div>
-                  <strong>Captions are {{ "ON" if room.caption_enabled else "OFF" }}</strong>
+                  <div class="caption-meta">Live Transcription Ingest</div>
+                  <strong>Transcription is {{ "ON" if room.transcription_enabled else "OFF" }}</strong>
                   <p>This starts or stops the transcription listener for this room while source audio keeps running.</p>
                 </div>
-                <form method="post" action="{{ url_for('set_room_captions', room_slug=room.slug) }}">
-                  <input type="hidden" name="caption_enabled" value="{{ "0" if room.caption_enabled else "1" }}">
-                  <button class="gate-button {% if room.caption_enabled %}is-on{% else %}is-off{% endif %}" type="submit">
-                    {{ "Turn Captions OFF" if room.caption_enabled else "Turn Captions ON" }}
+                <form method="post" action="{{ url_for('set_room_transcription', room_slug=room.slug) }}">
+                  <input type="hidden" name="transcription_enabled" value="{{ "0" if room.transcription_enabled else "1" }}">
+                  <button class="gate-button {% if room.transcription_enabled %}is-on{% else %}is-off{% endif %}" type="submit">
+                    {{ "Turn Transcription OFF" if room.transcription_enabled else "Turn Transcription ON" }}
                   </button>
                 </form>
               </section>
@@ -766,9 +772,31 @@ CAPTION_PANEL_TEMPLATE = """
                 {% endif %}
               </section>
               {% endif %}
+              <section class="translation-jobs">
+                <div class="caption-meta">Recent Service Stats</div>
+                {% if recent_meetings %}
+                  <div class="job-list">
+                    {% for meeting in recent_meetings %}
+                    <div class="job-row">
+                      <div>
+                        <strong>#{{ meeting.id }} · {{ meeting.room_label }} · {{ meeting.started_at }}</strong>
+                        <p>
+                          {{ meeting.transcript_segment_count }} transcription segments ·
+                          {{ meeting.transcript_character_count }} chars ·
+                          {{ meeting.listener_count }} listener{% if meeting.listener_count != 1 %}s{% endif %} ·
+                          {{ meeting.incident_count }} incident{% if meeting.incident_count != 1 %}s{% endif %}
+                        </p>
+                      </div>
+                    </div>
+                    {% endfor %}
+                  </div>
+                {% else %}
+                  <p>No completed or active services have been tracked yet.</p>
+                {% endif %}
+              </section>
             </div>
             <section class="latest-card" aria-live="polite">
-              <div class="caption-meta">Latest Caption</div>
+              <div class="caption-meta">Latest Transcription</div>
               <div class="latest-text" id="latest-caption">
                 {% if latest_segment %}
                   {{ latest_segment.text }}
@@ -787,7 +815,7 @@ CAPTION_PANEL_TEMPLATE = """
                   </article>
                 {% endfor %}
                 {% if not segments %}
-                  <div class="empty" id="empty-state">No caption lines received yet.</div>
+                  <div class="empty" id="empty-state">No transcription lines received yet.</div>
                 {% endif %}
               </div>
             </section>
