@@ -51,6 +51,7 @@ class NTCCaptionPanelTests(unittest.TestCase):
         self.assertIn(b"Latest Transcription", response.data)
         self.assertIn(b"Transcript", response.data)
         self.assertIn(b"Testing internal captions.", response.data)
+        self.assertIn(b"caption-word", response.data)
         self.assertIn(b"Room A", response.data)
         self.assertIn(b'data-ntc-branding="ntc-bg"', response.data)
         self.assertNotIn(b"Open Captions", response.data)
@@ -61,6 +62,8 @@ class NTCCaptionPanelTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Live Transcription Ingest", response.data)
         self.assertIn(b"Transcription is OFF", response.data)
+        self.assertIn(b"class=\"pill bad\">Transcription Off", response.data)
+        self.assertNotIn(b"pill warn", response.data)
 
         enabled = self.client.post(
             "/rooms/room-a/transcription",
@@ -71,6 +74,7 @@ class NTCCaptionPanelTests(unittest.TestCase):
 
         self.assertEqual(enabled.status_code, 200)
         self.assertIn(b"Transcription is ON", enabled.data)
+        self.assertIn(b"class=\"pill good\">Transcription On", enabled.data)
         self.assertTrue(self.app.ntc_store.get_room("room-a")["transcription_enabled"])
 
         disabled = self.client.post(

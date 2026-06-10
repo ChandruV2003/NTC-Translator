@@ -344,8 +344,9 @@ CAPTION_PANEL_TEMPLATE = """
         --accent: #8fd3ff;
         --accent-2: #8ff5c8;
         --good: #74ddb4;
-        --warn: #ffc875;
+        --good-soft: rgba(116, 221, 180, 0.12);
         --bad: #ff9a9a;
+        --bad-soft: rgba(255, 154, 154, 0.12);
         --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
         color-scheme: dark;
       }
@@ -440,9 +441,16 @@ CAPTION_PANEL_TEMPLATE = """
         letter-spacing: 0.08em;
         text-transform: uppercase;
       }
-      .pill.good { color: var(--good); border-color: rgba(116, 221, 180, 0.35); }
-      .pill.warn { color: var(--warn); border-color: rgba(255, 200, 117, 0.35); }
-      .pill.bad { color: var(--bad); border-color: rgba(255, 154, 154, 0.38); }
+      .pill.good {
+        color: var(--good);
+        border-color: rgba(116, 221, 180, 0.42);
+        background: var(--good-soft);
+      }
+      .pill.bad {
+        color: var(--bad);
+        border-color: rgba(255, 154, 154, 0.42);
+        background: var(--bad-soft);
+      }
       .board {
         border: 1px solid var(--line);
         border-radius: 28px;
@@ -543,8 +551,9 @@ CAPTION_PANEL_TEMPLATE = """
         color: var(--good);
       }
       .gate-button.is-off {
-        border-color: rgba(255, 200, 117, 0.4);
-        color: var(--warn);
+        border-color: rgba(255, 154, 154, 0.42);
+        background: var(--bad-soft);
+        color: var(--bad);
       }
       .translation-settings,
       .translation-jobs {
@@ -631,6 +640,23 @@ CAPTION_PANEL_TEMPLATE = """
         font-weight: 700;
         line-height: 1.35;
       }
+      .caption-word {
+        display: inline-block;
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .caption-word.is-new {
+        opacity: 0;
+        transform: translateY(0.24em);
+        animation: caption-word-reveal 360ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        animation-delay: var(--word-delay, 0ms);
+      }
+      @keyframes caption-word-reveal {
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
       .caption-meta {
         margin-bottom: 0.38rem;
         color: var(--muted);
@@ -665,6 +691,13 @@ CAPTION_PANEL_TEMPLATE = """
         .latest-card { min-height: 12rem; }
         .transcript-panel { max-height: none; }
       }
+      @media (prefers-reduced-motion: reduce) {
+        .caption-word.is-new {
+          animation: none;
+          opacity: 1;
+          transform: none;
+        }
+      }
     </style>
   </head>
   <body>
@@ -676,7 +709,7 @@ CAPTION_PANEL_TEMPLATE = """
           <p class="hero-note">Internal transcription, translated audio tests, and room output controls. This panel is isolated from the public WebCall and dial-in audio path.</p>
         </div>
         {% if room %}
-          <span class="pill {% if room.active %}good{% endif %}">{{ "Meeting Live" if room.active else "Standby" }}</span>
+          <span class="pill {% if room.active %}good{% else %}bad{% endif %}">{{ "Meeting Live" if room.active else "Standby" }}</span>
         {% endif %}
       </header>
 
@@ -699,7 +732,7 @@ CAPTION_PANEL_TEMPLATE = """
               <p>{{ room.current_device or "Waiting for source audio metadata." }}</p>
             </div>
             <div class="status-row">
-              <span class="pill {% if room.transcription_enabled %}good{% else %}warn{% endif %}">Transcription {{ "On" if room.transcription_enabled else "Off" }}</span>
+              <span class="pill {% if room.transcription_enabled %}good{% else %}bad{% endif %}">Transcription {{ "On" if room.transcription_enabled else "Off" }}</span>
               <span class="pill {% if room.host_online %}good{% else %}bad{% endif %}">Agent {{ "Seen" if room.host_online else "Not Seen" }}</span>
               <span class="pill" id="poll-status">Polling</span>
             </div>
@@ -841,13 +874,25 @@ CAPTION_PANEL_TEMPLATE = """
         let lastId = Math.max(0, ...[...board.querySelectorAll("[data-segment-id]")].map((node) => Number(node.dataset.segmentId || "0")));
         const seen = new Set([...board.querySelectorAll("[data-segment-id]")].map((node) => node.dataset.segmentId));
 
-        function escapeHtml(value) {
-          return String(value ?? "")
-            .replaceAll("&", "&amp;")
-            .replaceAll("<", "&lt;")
-            .replaceAll(">", "&gt;")
-            .replaceAll('"', "&quot;")
-            .replaceAll("'", "&#39;");
+        function renderWordStream(parent, text, animate = false) {
+          parent.replaceChildren();
+          const parts = String(text || "").replace(/\\s+/g, " ").trim().split(/(\\s+)/);
+          let wordIndex = 0;
+          for (const part of parts) {
+            if (!part) continue;
+            if (/^\\s+$/.test(part)) {
+              parent.append(" ");
+              continue;
+            }
+            const word = document.createElement("span");
+            word.className = animate ? "caption-word is-new" : "caption-word";
+            word.textContent = part;
+            if (animate) {
+              word.style.setProperty("--word-delay", `${Math.min(wordIndex * 42, 1400)}ms`);
+              wordIndex += 1;
+            }
+            parent.appendChild(word);
+          }
         }
 
         function appendSegment(segment) {
@@ -859,9 +904,14 @@ CAPTION_PANEL_TEMPLATE = """
           const article = document.createElement("article");
           article.className = "caption-line";
           article.dataset.segmentId = id;
-          article.innerHTML = `<div class="caption-meta">${escapeHtml(segment.received_at)}</div>${escapeHtml(segment.text)}`;
+          const meta = document.createElement("div");
+          meta.className = "caption-meta";
+          meta.textContent = segment.received_at || "";
+          const text = document.createElement("span");
+          renderWordStream(text, segment.text, true);
+          article.append(meta, text);
           board.appendChild(article);
-          if (latestCaption) latestCaption.textContent = segment.text;
+          if (latestCaption) renderWordStream(latestCaption, segment.text, true);
           while (board.querySelectorAll(".caption-line").length > 80) {
             board.querySelector(".caption-line")?.remove();
           }
@@ -876,10 +926,10 @@ CAPTION_PANEL_TEMPLATE = """
             for (const segment of payload.segments || []) appendSegment(segment);
             status.textContent = "Connected";
             status.classList.add("good");
-            status.classList.remove("warn");
+            status.classList.remove("bad");
           } catch (error) {
             status.textContent = "Reconnecting";
-            status.classList.add("warn");
+            status.classList.add("bad");
             status.classList.remove("good");
           } finally {
             window.setTimeout(poll, Math.max(500, pollMs));
