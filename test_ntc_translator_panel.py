@@ -338,6 +338,34 @@ class NTCCaptionPanelTests(unittest.TestCase):
         self.assertEqual(jobs[0]["translated_text"], "让我们祷告。")
         self.assertTrue((Path(self.tempdir.name) / "translation-audio" / jobs[0]["audio_filename"]).exists())
 
+    def test_live_translation_worker_skips_punctuation_only_segments(self):
+        app = create_app(
+            {
+                "TESTING": True,
+                "NTC_DB_PATH": str(self.db_path),
+                "NTC_TRANSLATOR_AUTH_ENABLED": "0",
+                "NTC_TRANSCRIPTION_BASE_URL": "",
+                "NTC_TRANSLATION_AUDIO_DIR": str(Path(self.tempdir.name) / "translation-audio"),
+                "NTC_TRANSLATION_WORKER_ENABLED": "1",
+                "NTC_TRANSLATION_TTS_URL": "http://m4.example/translate-tts",
+            }
+        )
+        app.ntc_store.set_host_translation_output_enabled("hp-envy-16-ad0xx", True)
+        app.ntc_translation_worker._poll_once()
+        app.ntc_store.record_transcript_segment(
+            "room-a",
+            host_slug="hp-envy-16-ad0xx",
+            provider="local_http",
+            model="openai/whisper-large-v3",
+            text=".",
+        )
+
+        with patch("ntc_translator_app.requests.post") as mocked_post:
+            app.ntc_translation_worker._poll_once()
+
+        mocked_post.assert_not_called()
+        self.assertEqual(app.ntc_store.list_recent_translation_audio_jobs("room-a"), [])
+
     def test_caption_panel_health_does_not_require_password(self):
         response = self.client.get("/healthz")
 

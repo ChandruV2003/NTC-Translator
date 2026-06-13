@@ -57,6 +57,10 @@ def _safe_language_slug(target_language: str) -> str:
     return safe or "zh-CN"
 
 
+def _has_meaningful_text(text: str) -> bool:
+    return any(char.isalnum() for char in text or "")
+
+
 class LiveTranslationWorker:
     """Turns newly transcribed segments into translated WAV jobs for the room agent."""
 
@@ -163,7 +167,7 @@ class LiveTranslationWorker:
 
     def _queue_segment(self, host: dict, segment: dict, target_language: str) -> bool:
         source_text = " ".join(str(segment.get("text") or "").split())
-        if not source_text:
+        if not source_text or not _has_meaningful_text(source_text):
             return False
         trimmed_source_text = source_text[: self.max_chars]
         payload = {
