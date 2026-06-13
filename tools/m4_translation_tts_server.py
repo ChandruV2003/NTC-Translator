@@ -36,6 +36,12 @@ DEFAULT_VOICES = {
     "ml": "Lekha",
 }
 
+BIBLE_NAME_GLOSSARY = (
+    "David=大卫, Saul=扫罗, Samuel=撒母耳, Joseph=约瑟, Jesus=耶稣, Paul=保罗, "
+    "Peter=彼得, Moses=摩西, Abraham=亚伯拉罕, Isaac=以撒, Jacob=雅各, "
+    "Israel=以色列, Jerusalem=耶路撒冷, Corinthians=哥林多前后书"
+)
+
 
 def _json_bytes(payload):
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -90,7 +96,8 @@ def _translation_messages(text, target_language, *, strict):
                 "content": (
                     "You are a church interpreter. Translate English transcript fragments "
                     "into Simplified Mandarin Chinese. Output Chinese only. Do not copy "
-                    "the English. Do not explain."
+                    f"the English. Preserve Bible names using this glossary: {BIBLE_NAME_GLOSSARY}. "
+                    "Do not explain."
                 ),
             },
             {
@@ -104,6 +111,7 @@ def _translation_messages(text, target_language, *, strict):
             "content": (
                 "You are a church interpreter. Translate English transcript fragments accurately "
                 f"and naturally into {language_name}. Preserve names, Bible references, and meaning. "
+                f"For Mandarin Chinese, use this Bible-name glossary: {BIBLE_NAME_GLOSSARY}. "
                 "Return only the translated text. Do not explain."
             ),
         },
