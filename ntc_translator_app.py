@@ -5,6 +5,9 @@ from __future__ import annotations
 import base64
 import hmac
 import os
+import threading
+import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -39,6 +42,169 @@ TRANSLATION_LANGUAGE_OPTIONS = [
 ]
 
 TRANSLATION_LANGUAGE_LABELS = {item["code"]: item["label"] for item in TRANSLATION_LANGUAGE_OPTIONS}
+TRANSLATION_OUTPUT_HOSTS = {"hp-envy-16-ad0xx"}
+
+
+def _config_bool(value: object, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _safe_language_slug(target_language: str) -> str:
+    normalized = (target_language or "zh-CN").strip() or "zh-CN"
+    safe = "".join(char for char in normalized if char.isalnum() or char in {"-", "_"})
+    return safe or "zh-CN"
+
+
+class LiveTranslationWorker:
+    """Turns newly transcribed segments into translated WAV jobs for the room agent."""
+
+    def __init__(self, app: Flask, ntc_store: NTCStore):
+        self.app = app
+        self.ntc_store = ntc_store
+        self.audio_dir = Path(app.config.get("NTC_TRANSLATION_AUDIO_DIR") or "/app/data/translation-audio")
+        self.tts_url = str(app.config.get("NTC_TRANSLATION_TTS_URL") or "").strip()
+        self.tts_token = str(app.config.get("NTC_TRANSLATION_TTS_TOKEN") or "").strip()
+        self.poll_seconds = max(0.25, float(app.config.get("NTC_TRANSLATION_WORKER_POLL_SECONDS") or 1.0))
+        self.request_timeout_seconds = max(
+            5.0,
+            float(app.config.get("NTC_TRANSLATION_WORKER_REQUEST_TIMEOUT_SECONDS") or 180.0),
+        )
+        self.batch_limit = max(1, min(10, int(app.config.get("NTC_TRANSLATION_WORKER_BATCH_LIMIT") or 2)))
+        self.max_chars = max(80, int(app.config.get("NTC_TRANSLATION_WORKER_MAX_CHARS") or 700))
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        if not self.tts_url:
+            self.app.logger.warning("live translation worker disabled: NTC_TRANSLATION_TTS_URL is not configured")
+            return
+        if self._thread and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._run, name="ntc-live-translation-worker", daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        self.app.logger.info("live translation worker started tts_url=%s", self.tts_url)
+        while not self._stop_event.is_set():
+            try:
+                self._poll_once()
+            except Exception as exc:  # pragma: no cover - defensive runtime guard
+                self.app.logger.exception("live translation worker poll failed: %s", exc)
+            self._stop_event.wait(self.poll_seconds)
+
+    def _poll_once(self):
+        if not self.tts_url:
+            return
+        for host in self.ntc_store.list_hosts(include_secret=False):
+            if host["slug"] not in TRANSLATION_OUTPUT_HOSTS:
+                continue
+            if not host.get("translation_output_enabled"):
+                continue
+            self._poll_host(host)
+
+    def _poll_host(self, host: dict):
+        host_slug = host["slug"]
+        room_slug = host["room_slug"]
+        target_language = host.get("translation_target_language") or "zh-CN"
+        gate_updated_at = host.get("updated_at") or ""
+        state = self.ntc_store.get_translation_worker_state(host_slug, target_language)
+        latest_id = self.ntc_store.latest_transcript_segment_id(room_slug)
+        if not state or state.get("gate_updated_at") != gate_updated_at:
+            self.ntc_store.set_translation_worker_state(
+                host_slug,
+                room_slug=room_slug,
+                target_language=target_language,
+                last_segment_id=latest_id,
+                gate_updated_at=gate_updated_at,
+                last_error="",
+            )
+            return
+
+        last_processed_id = int(state.get("last_segment_id") or 0)
+        segments = self.ntc_store.list_transcript_segments_after(
+            room_slug,
+            after_id=last_processed_id,
+            limit=self.batch_limit,
+        )
+        for segment in segments:
+            segment_id = int(segment.get("id") or 0)
+            try:
+                if self._queue_segment(host, segment, target_language):
+                    last_processed_id = segment_id
+                else:
+                    last_processed_id = segment_id
+                self.ntc_store.set_translation_worker_state(
+                    host_slug,
+                    room_slug=room_slug,
+                    target_language=target_language,
+                    last_segment_id=last_processed_id,
+                    gate_updated_at=gate_updated_at,
+                    last_error="",
+                )
+            except Exception as exc:
+                self.ntc_store.set_translation_worker_state(
+                    host_slug,
+                    room_slug=room_slug,
+                    target_language=target_language,
+                    last_segment_id=last_processed_id,
+                    gate_updated_at=gate_updated_at,
+                    last_error=str(exc)[:500],
+                )
+                self.app.logger.warning(
+                    "translation worker failed host=%s room=%s segment_id=%s error=%s",
+                    host_slug,
+                    room_slug,
+                    segment_id,
+                    exc,
+                )
+                return
+
+    def _queue_segment(self, host: dict, segment: dict, target_language: str) -> bool:
+        source_text = " ".join(str(segment.get("text") or "").split())
+        if not source_text:
+            return False
+        trimmed_source_text = source_text[: self.max_chars]
+        payload = {
+            "text": trimmed_source_text,
+            "target_language": target_language,
+            "segment_id": int(segment.get("id") or 0),
+            "room_slug": host["room_slug"],
+            "host_slug": host["slug"],
+        }
+        headers = {"Content-Type": "application/json"}
+        if self.tts_token:
+            headers["Authorization"] = f"Bearer {self.tts_token}"
+        response = requests.post(
+            self.tts_url,
+            json=payload,
+            headers=headers,
+            timeout=self.request_timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json()
+        translated_text = str(data.get("translated_text") or "").strip()
+        audio_base64 = str(data.get("audio_base64") or "").strip()
+        if not audio_base64:
+            raise RuntimeError("translation TTS endpoint returned no audio")
+
+        self.audio_dir.mkdir(parents=True, exist_ok=True)
+        filename = (
+            f"live-{int(segment.get('id') or 0)}-"
+            f"{_safe_language_slug(target_language)}-{uuid.uuid4().hex[:8]}.wav"
+        )
+        audio_path = self.audio_dir / filename
+        audio_path.write_bytes(base64.b64decode(audio_base64, validate=True))
+        self.ntc_store.enqueue_translation_audio_job(
+            host["slug"],
+            room_slug=host["room_slug"],
+            target_language=target_language,
+            audio_filename=filename,
+            source_text=trimmed_source_text,
+            translated_text=translated_text,
+        )
+        return True
 
 
 def create_app(test_config: dict | None = None, *, store: NTCStore | None = None) -> Flask:
@@ -61,6 +227,15 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
         NTC_TRANSLATOR_POLL_MS=int(os.getenv("NTC_TRANSLATOR_POLL_MS", os.getenv("NTC_CAPTIONS_POLL_MS", "1000"))),
         NTC_TRANSCRIPTION_BASE_URL=os.getenv("NTC_TRANSCRIPTION_BASE_URL", ""),
         NTC_TRANSLATION_AUDIO_DIR=os.getenv("NTC_TRANSLATION_AUDIO_DIR", "/app/data/translation-audio"),
+        NTC_TRANSLATION_WORKER_ENABLED=os.getenv("NTC_TRANSLATION_WORKER_ENABLED", "0"),
+        NTC_TRANSLATION_TTS_URL=os.getenv("NTC_TRANSLATION_TTS_URL", ""),
+        NTC_TRANSLATION_TTS_TOKEN=os.getenv("NTC_TRANSLATION_TTS_TOKEN", ""),
+        NTC_TRANSLATION_WORKER_POLL_SECONDS=float(os.getenv("NTC_TRANSLATION_WORKER_POLL_SECONDS", "1.0")),
+        NTC_TRANSLATION_WORKER_REQUEST_TIMEOUT_SECONDS=float(
+            os.getenv("NTC_TRANSLATION_WORKER_REQUEST_TIMEOUT_SECONDS", "180.0")
+        ),
+        NTC_TRANSLATION_WORKER_BATCH_LIMIT=int(os.getenv("NTC_TRANSLATION_WORKER_BATCH_LIMIT", "2")),
+        NTC_TRANSLATION_WORKER_MAX_CHARS=int(os.getenv("NTC_TRANSLATION_WORKER_MAX_CHARS", "700")),
     )
     if test_config:
         app.config.update(test_config)
@@ -68,6 +243,11 @@ def create_app(test_config: dict | None = None, *, store: NTCStore | None = None
     install_branding(app)
     ntc_store = store or NTCStore(app.config.get("NTC_DB_PATH"))
     app.ntc_store = ntc_store
+    app.ntc_translation_worker = None
+    if _config_bool(app.config.get("NTC_TRANSLATION_WORKER_ENABLED")):
+        app.ntc_translation_worker = LiveTranslationWorker(app, ntc_store)
+        if not app.config.get("TESTING"):
+            app.ntc_translation_worker.start()
 
     def _panel_password() -> str:
         return (

@@ -63,6 +63,7 @@ ROOM_REFERENCE_TABLES = (
     "audio_level_samples",
     "transcript_segments",
     "translation_audio_jobs",
+    "translation_worker_state",
     "room_events",
 )
 
@@ -373,6 +374,19 @@ class NTCStore:
 
                 CREATE INDEX IF NOT EXISTS idx_translation_audio_jobs_host_id
                 ON translation_audio_jobs(host_slug, id DESC);
+
+                CREATE TABLE IF NOT EXISTS translation_worker_state (
+                    host_slug TEXT NOT NULL,
+                    target_language TEXT NOT NULL DEFAULT 'zh-CN',
+                    room_slug TEXT NOT NULL,
+                    last_segment_id INTEGER NOT NULL DEFAULT 0,
+                    gate_updated_at TEXT NOT NULL DEFAULT '',
+                    last_error TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(host_slug, target_language),
+                    FOREIGN KEY(host_slug) REFERENCES hosts(slug) ON DELETE CASCADE,
+                    FOREIGN KEY(room_slug) REFERENCES rooms(slug) ON DELETE CASCADE
+                );
 
                 CREATE TABLE IF NOT EXISTS room_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -876,6 +890,7 @@ class NTCStore:
             "device_order": _json_list(row["device_order_json"]),
             "translation_output_enabled": _bool_from_int(row["translation_output_enabled"]),
             "translation_target_language": row["translation_target_language"] or "zh-CN",
+            "updated_at": row["updated_at"],
             "priority": HOST_PRIORITY.get(row["slug"], 0),
             "schedules": schedules,
             "schedule_active": schedule_active,
@@ -985,6 +1000,7 @@ class NTCStore:
                     hosts.translation_output_enabled,
                     hosts.translation_target_language,
                     hosts.heartbeat_token,
+                    hosts.updated_at,
                     rooms.label AS room_label,
                     rooms.description AS room_description,
                     rooms.enabled AS room_enabled
@@ -1015,6 +1031,7 @@ class NTCStore:
                     hosts.translation_output_enabled,
                     hosts.translation_target_language,
                     hosts.heartbeat_token,
+                    hosts.updated_at,
                     rooms.label AS room_label,
                     rooms.description AS room_description,
                     rooms.enabled AS room_enabled
@@ -1196,6 +1213,55 @@ class NTCStore:
             )
             if cursor.rowcount != 1:
                 raise ValueError(f"Unknown translation audio job: {job_id}")
+
+    def get_translation_worker_state(self, host_slug: str, target_language: str):
+        normalized_language = (target_language or "zh-CN").strip() or "zh-CN"
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT host_slug, target_language, room_slug, last_segment_id, gate_updated_at, last_error, updated_at
+                FROM translation_worker_state
+                WHERE host_slug = ? AND target_language = ?
+                """,
+                (host_slug, normalized_language),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def set_translation_worker_state(
+        self,
+        host_slug: str,
+        *,
+        room_slug: str,
+        target_language: str,
+        last_segment_id: int,
+        gate_updated_at: str = "",
+        last_error: str = "",
+    ):
+        normalized_language = (target_language or "zh-CN").strip() or "zh-CN"
+        timestamp = _utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO translation_worker_state
+                    (host_slug, target_language, room_slug, last_segment_id, gate_updated_at, last_error, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(host_slug, target_language) DO UPDATE SET
+                    room_slug = excluded.room_slug,
+                    last_segment_id = excluded.last_segment_id,
+                    gate_updated_at = excluded.gate_updated_at,
+                    last_error = excluded.last_error,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    host_slug,
+                    normalized_language,
+                    room_slug,
+                    max(0, int(last_segment_id or 0)),
+                    (gate_updated_at or "").strip(),
+                    (last_error or "").strip(),
+                    timestamp,
+                ),
+            )
 
     def replace_host_schedule(self, slug: str, schedule_rows):
         if isinstance(schedule_rows, str):
@@ -1979,6 +2045,18 @@ class NTCStore:
             }
             for row in rows
         ]
+
+    def latest_transcript_segment_id(self, room_slug: str) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(MAX(id), 0) AS latest_id
+                FROM transcript_segments
+                WHERE room_slug = ?
+                """,
+                (room_slug,),
+            ).fetchone()
+        return int(row["latest_id"] or 0)
 
     def sync_meeting_state(self, room_slug: str, *, active: bool, host_slug: str | None = None, trigger_mode: str = "system", actor: str = ""):
         timestamp = _utc_now()
