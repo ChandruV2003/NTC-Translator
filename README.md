@@ -10,6 +10,9 @@ This service is intentionally separate from `NTC-WebCall` and `NTC-Transcription
 - Entry point: `ntc_translator_panel:app`
 - Runtime data is expected under `data/` and is not committed
 - Environment variables use the `NTC_*` prefix
+- Future local translation/TTS generation should use the M4 Mac mini runtime,
+  not the Debian Mac mini. The current translated audio output path only gates
+  and serves queued WAV jobs for the room source agent to play.
 
 ## Endpoints
 
